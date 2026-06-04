@@ -509,25 +509,40 @@ GIFT's SPN structure maps almost directly to hardware wiring for the
 permutation layer, explaining its excellent gate count despite poor software
 performance.  SIMON is competitive in both domains.
 
-\subsection{GPU Performance Analysis}
+\subsection{GPU Benchmark Results}
 
-CTR mode maps naturally to GPU parallelism: with $N$ data blocks, we
-launch $N$ threads that execute independently.  The GPU advantage grows
-with data size because the kernel launch overhead is amortized.
+Table~\ref{tab:gpu} shows GPU vs.\ single-threaded CPU performance for
+CTR mode on an NVIDIA Tesla~T4 (SM~7.5, 40~SMs, 1590~MHz), compiled with
+\texttt{nvcc~-O2}.
 
-\textbf{Expected behavior}: SIMON's compact round function (3 shifts,
-1~AND, 1~XOR per round $\times$ 44~rounds) uses minimal registers and
-achieves high occupancy.  GIFT's 128-byte permutation table in constant
-memory and larger per-thread state (32~nibbles + 128-bit arrays) increase
-register pressure, but the massively parallel execution still outperforms
-single-threaded CPU for large data sets.
+\begin{table}[htbp]
+\caption{GPU vs CPU CTR-Mode Throughput (Tesla T4)}
+\label{tab:gpu}
+\centering\small
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Cipher} & \textbf{Data} & \textbf{CPU (ms)} & \textbf{GPU (ms)} & \textbf{Speedup} \\
+\midrule
+SIMON 64/128 &  64 KiB &     0.78 &  0.04 &   21.9$\times$ \\
+SIMON 64/128 &   1 MiB &    11.64 &  0.03 &  348.1$\times$ \\
+SIMON 64/128 &  16 MiB &   201.92 &  0.48 &  420.0$\times$ \\
+\midrule
+GIFT-128     &  64 KiB &    77.22 &  0.39 &  196.1$\times$ \\
+GIFT-128     &   1 MiB & 1{,}290  &  3.33 &  387.7$\times$ \\
+GIFT-128     &  16 MiB & 23{,}516 & 88.56 &  265.5$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\textbf{Parallelism characteristics}: For 16~MiB of data, SIMON produces
-$16 \times 2^{20} / 8 = 2{,}097{,}152$ independent blocks, and
-GIFT produces $1{,}048{,}576$ blocks---both sufficient to saturate a
-modern GPU with thousands of cores.  CBC encryption remains sequential and
-cannot benefit from GPU parallelism, though CBC \emph{decryption} is
-parallelizable.
+\textbf{Analysis:} CTR mode is embarrassingly parallel---each thread
+encrypts one counter block independently.  Speedups grow with data size as
+kernel launch overhead is amortized.  SIMON achieves up to
+\textbf{420$\times$} speedup at 16~MiB, benefiting from its minimal
+register footprint (only 32-bit shifts and XORs).  GIFT reaches
+\textbf{388$\times$} at 1~MiB but drops to 266$\times$ at 16~MiB, likely
+due to higher register pressure from the 128-bit permutation arrays
+causing reduced occupancy.  CBC encryption remains inherently sequential,
+though CBC \emph{decryption} is parallelizable.
 
 \subsection{Discussion}
 
@@ -586,9 +601,9 @@ predictable, table-free execution suitable for side-channel-resistant
 implementations.
 
 The GPU implementations demonstrate that CTR mode is embarrassingly
-parallel and achieves significant speedups over single-threaded CPU
-execution for large data volumes.  SIMON's minimal register footprint
-makes it particularly well-suited for GPU execution.
+parallel, achieving up to 420$\times$ (SIMON) and 388$\times$ (GIFT)
+speedups over single-threaded CPU on an NVIDIA Tesla~T4.  SIMON's minimal
+register footprint makes it particularly well-suited for GPU execution.
 
 The Feistel-vs.-SPN architectural comparison reveals that SIMON dominates
 in software metrics (both CPU and GPU) while GIFT dominates in hardware
