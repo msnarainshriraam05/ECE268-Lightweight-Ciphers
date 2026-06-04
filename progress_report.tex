@@ -1,0 +1,101 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.9in]{geometry}
+\usepackage{enumitem}
+\usepackage{booktabs}
+
+\setlength{\parskip}{0.25em}
+\setlist{nosep, leftmargin=*}
+
+\title{\vspace{-1.5em}ECE 268 Project Progress Report\\[0.2em]
+\large Lightweight Block Ciphers for Constrained Devices}
+\author{%
+  Narain Shriraam M S (A69041741) \and
+  Karthik N R \and
+  Tushar Nasery
+}
+\date{June 3, 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.2em}
+
+\section*{Project Summary}
+\textbf{Goal:} Implement SIMON-64/128 and GIFT-128/128 with encryption, decryption, key schedules, and CBC/CTR modes; validate against published test vectors; benchmark against an AES-128 baseline (code size, cycles/byte, key-schedule cost) for IoT/RFID settings where AES is too costly. \\
+\textbf{Status:} All implementations are complete and correct. 16/16 test cases pass including spec-mandated ECB vectors. Benchmarks and code-size measurements are collected.
+
+\section{Work Completed}
+
+\subsection*{Implementations}
+\begin{itemize}
+  \item \textbf{Repository layout:} \texttt{simon64.c/h}, \texttt{gift128.c/h}, \texttt{modes.c/h}, \texttt{test\_vectors.c}, \texttt{bench.c}, and \texttt{Makefile}.
+  \item \textbf{SIMON 64/128:} 64-bit block, 128-bit key, 44 rounds (ePrint 2013/404). Uses $z_3$ key schedule (m=4), big-endian block I/O. Feistel round function uses circular shifts (1, 2, 8) and bitwise AND/XOR.
+  \item \textbf{GIFT-128/128:} 128-bit block/key, 40 rounds (ePrint 2017/622). Nibble-based SPN with 4-bit S-box, 128-bit bit-permutation, 6-bit round constants, and key update. Precomputed round keys \texttt{rk[40][2]}.
+  \item \textbf{Modes:} Cipher-agnostic CBC (PKCS\#7 padding) and CTR (big-endian counter) via function-pointer interface \texttt{block\_fn\_t}. Any cipher plugs in without modification.
+  \item \textbf{Test harness:} 16 test cases covering SIMON ECB, GIFT ECB (2 spec vectors), CBC round-trips for both ciphers, CTR round-trips, and PKCS\#7 padding edge cases (1-byte, block-aligned).
+  \item \textbf{Benchmark:} \texttt{bench.c} measures key-schedule cost (ns), ECB and CTR throughput (cycles/byte) for SIMON, GIFT, and AES-128 (CommonCrypto hw-accelerated baseline).
+\end{itemize}
+
+\subsection*{Test Vector Validation}
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Cipher} & \textbf{Block / Key} & \textbf{Spec vectors} & \textbf{CBC/CTR} & \textbf{PKCS\#7} \\
+\midrule
+SIMON 64/128 & 64 / 128 & \textbf{Pass} & \textbf{Pass} & \textbf{Pass} \\
+GIFT-128/128 & 128 / 128 & \textbf{Pass (2/2)} & \textbf{Pass} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Benchmark Results (Apple Silicon, \texttt{-O2}, 64 KiB)}
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lcccr}
+\toprule
+\textbf{Cipher} & \textbf{Key Sched (ns)} & \textbf{ECB (cpb)} & \textbf{CTR (cpb)} & \textbf{.text (B)} \\
+\midrule
+SIMON 64/128 & 38 & 10.9 & 10.8 & 356 \\
+GIFT-128/128 & 488 & 358.8 & 338.9 & 4\,476 \\
+AES-128 (hw) & 448 & 1.8 & 1.6 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+\textbf{Analysis:} SIMON's Feistel structure with simple bitwise operations yields a tiny code footprint (356 B) and competitive throughput ($\approx$11 cpb). GIFT's nibble-based SPN permutation is significantly slower in software ($\approx$340 cpb) but is designed for minimal hardware gate count ($\sim$1300 GE per literature). AES-128 with hardware AES-NI achieves $<$2 cpb but is unavailable on the target constrained platforms.
+
+\section{Challenges and Issues Encountered}
+\begin{itemize}
+  \item \textbf{SIMON variant confusion:} The original implementation used SIMON 64/64 (m=2, 32 rounds, $z_0$), a non-standard variant absent from the spec appendix. Corrected to SIMON 64/128 (m=4, 44 rounds, $z_3$) which has a published test vector.
+  \item \textbf{GIFT nibble packing:} The byte-to-nibble conversion had swapped high/low nibbles, causing all encrypt outputs to mismatch. Fixed by aligning with the reference C++ implementation's ordering.
+  \item \textbf{Key schedule constants:} Ensuring the correct $z$-sequence constant (\texttt{0xfc2ce51207a635db}) for $z_3$ required cross-checking against Crypto++ and refinery implementations.
+\end{itemize}
+
+\section{Plans for Final Submission}
+\textbf{Remaining work:}
+\begin{enumerate}
+  \item Final report: expand analysis with gate-count references, Feistel vs.\ SPN trade-off discussion.
+  \item Presentation: 10--12 slides with architecture diagrams and benchmark bar charts.
+  \item Stretch: compare at additional data sizes (1 KB, 16 KB) and add a third cipher (SPECK-64 or PRESENT-80).
+\end{enumerate}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{p{0.22\linewidth}p{0.7\linewidth}}
+\toprule
+\textbf{Member} & \textbf{Tasks} \\
+\midrule
+Narain Shriraam M S & GIFT-128 implementation, benchmark scripts, final report \\
+Karthik N R & SIMON-64 implementation, AES baseline, results plots \\
+Tushar Nasery & Test harness, Makefile, modes, slides \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Feasibility and Direction}
+The project is on track. All core deliverables (two cipher implementations, CBC/CTR wrappers, test vector validation, and AES-baseline benchmark) are complete and passing. The remaining work is report writing and presentation preparation. The benchmark data confirms the design rationale: SIMON offers the best software performance among lightweight ciphers, while GIFT targets hardware efficiency.
+
+\vspace{0.3em}
+\small\textit{References:} Bogdanov et al., PRESENT (CHES 2007); Beaulieu et al., SIMON/SPECK (ePrint 2013/404); Banik et al., GIFT (ePrint 2017/622).
+
+\end{document}
