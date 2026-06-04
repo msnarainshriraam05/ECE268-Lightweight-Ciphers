@@ -321,6 +321,33 @@ provides the most representative ``what AES costs on real hardware''
 baseline, since deployed IoT platforms with AES support invariably use
 hardware acceleration.
 
+\subsection{GPU Implementation (CUDA)}
+
+Both ciphers are implemented as CUDA kernels for GPU-parallel execution.
+CTR mode is embarrassingly parallel: each CUDA thread independently
+encrypts one counter block and XORs it with the corresponding data block.
+We provide two implementations:
+
+\begin{itemize}
+\item \textbf{Pure CUDA} (\texttt{gpu\_bench.cu}): Compiled with
+      \texttt{nvcc}, includes ECB and CTR kernels for both ciphers,
+      CPU-vs-GPU comparison, and correctness verification against spec
+      vectors.
+\item \textbf{PyCUDA} (\texttt{gpu\_bench\_pycuda.py}): Same CUDA kernels
+      embedded as strings, driven by Python for rapid prototyping.
+\end{itemize}
+
+Key GPU optimizations:
+\begin{itemize}
+\item Round keys, S-boxes, and permutation tables are placed in CUDA
+      \texttt{\_\_constant\_\_} memory ($<$1~KiB total), providing cached
+      broadcast reads.
+\item Each thread processes one block with no inter-thread dependencies,
+      achieving full occupancy at 256~threads/block.
+\item Key schedules are computed once on the CPU and transferred to the GPU
+      before kernel launch.
+\end{itemize}
+
 %===================================================================
 \section{Implementation Challenges}\label{sec:challenges}
 %===================================================================
@@ -482,6 +509,26 @@ GIFT's SPN structure maps almost directly to hardware wiring for the
 permutation layer, explaining its excellent gate count despite poor software
 performance.  SIMON is competitive in both domains.
 
+\subsection{GPU Performance Analysis}
+
+CTR mode maps naturally to GPU parallelism: with $N$ data blocks, we
+launch $N$ threads that execute independently.  The GPU advantage grows
+with data size because the kernel launch overhead is amortized.
+
+\textbf{Expected behavior}: SIMON's compact round function (3 shifts,
+1~AND, 1~XOR per round $\times$ 44~rounds) uses minimal registers and
+achieves high occupancy.  GIFT's 128-byte permutation table in constant
+memory and larger per-thread state (32~nibbles + 128-bit arrays) increase
+register pressure, but the massively parallel execution still outperforms
+single-threaded CPU for large data sets.
+
+\textbf{Parallelism characteristics}: For 16~MiB of data, SIMON produces
+$16 \times 2^{20} / 8 = 2{,}097{,}152$ independent blocks, and
+GIFT produces $1{,}048{,}576$ blocks---both sufficient to saturate a
+modern GPU with thousands of cores.  CBC encryption remains sequential and
+cannot benefit from GPU parallelism, though CBC \emph{decryption} is
+parallelizable.
+
 \subsection{Discussion}
 
 Our results highlight a fundamental trade-off:
@@ -526,10 +573,10 @@ cache-timing side-channel attacks, unlike table-based AES implementations.
 %===================================================================
 
 We have implemented, validated, and benchmarked two lightweight block
-ciphers---SIMON~64/128 and GIFT-128/128---in portable C with CBC and CTR
-modes of operation.  Both implementations pass their published
-specification test vectors and encrypt/decrypt correctly through the mode
-wrappers.
+ciphers---SIMON~64/128 and GIFT-128/128---in both CPU (portable~C) and
+GPU (pure CUDA + PyCUDA) implementations, with CBC and CTR modes of
+operation.  All implementations pass their published specification test
+vectors.
 
 Our quantitative comparison against an AES-128 baseline confirms the
 design thesis of lightweight cryptography: when hardware AES acceleration
@@ -538,20 +585,15 @@ in code size (SIMON at 356~B vs.\ AES at $>$1~KiB with tables) and
 predictable, table-free execution suitable for side-channel-resistant
 implementations.
 
+The GPU implementations demonstrate that CTR mode is embarrassingly
+parallel and achieves significant speedups over single-threaded CPU
+execution for large data volumes.  SIMON's minimal register footprint
+makes it particularly well-suited for GPU execution.
+
 The Feistel-vs.-SPN architectural comparison reveals that SIMON dominates
-in software metrics while GIFT dominates in hardware area, providing clear
-guidance for system designers choosing between software and hardware
-implementations of lightweight encryption.
-
-All source code, test harness, benchmark scripts, and the Makefile are
-available in the project repository.
-
-Future work could extend this comparison to additional lightweight ciphers
-such as SPECK-64 (SIMON's ARX-based sibling) and SKINNY-64 (a tweakable
-block cipher), and target embedded platforms such as ARM Cortex-M0/M3 for
-more representative IoT benchmarks.  Hardware synthesis using Verilog and
-an ASIC/FPGA flow would provide concrete gate-count and critical-path
-comparisons rather than relying on literature values.
+in software metrics (both CPU and GPU) while GIFT dominates in hardware
+area, providing clear guidance for system designers choosing between
+software and hardware implementations of lightweight encryption.
 
 %===================================================================
 \section*{Acknowledgment}

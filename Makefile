@@ -45,6 +45,16 @@ simon64.o: simon64.c simon64.h
 gift128.o: gift128.c gift128.h
 	$(CC) $(CFLAGS) -c gift128.c
 
+# ── GPU benchmark (requires NVIDIA GPU + nvcc) ─────────────
+gpu_bench: gpu_bench.cu
+	nvcc -O2 -o $@ $<
+
+gpu: gpu_bench
+	./gpu_bench
+
+gpu_pycuda:
+	python3 gpu_bench_pycuda.py
+
 # ── Clean ───────────────────────────────────────────────────
 clean:
-	rm -f test_vectors bench *.o
+	rm -f test_vectors bench gpu_bench *.o
