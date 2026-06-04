@@ -1,0 +1,16 @@
+# Compiled binaries
+test_vectors
+bench
+*.o
+
+# LaTeX intermediate files
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+
+# OS files
+.DS_Store
