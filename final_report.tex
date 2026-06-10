@@ -57,7 +57,9 @@ vectors, then quantitatively benchmark key-schedule cost, throughput
 \texttt{gcc~-O2}, SIMON~64/128 achieves roughly 11~cycles/byte with only
 356~bytes of compiled code, while GIFT-128 trades software speed
 ($\approx$339~cpb) for an extremely compact hardware footprint reported in
-the literature at $\sim$1300~GE.  Our results confirm that lightweight
+the literature at $\sim$1300~GE.  Pure CUDA implementations on an NVIDIA
+Tesla~T4 achieve up to $420\times$ (SIMON) and $388\times$ (GIFT) CTR-mode
+speedups over single-threaded CPU.  Our results confirm that lightweight
 ciphers offer meaningful advantages over AES on platforms lacking hardware
 acceleration, and that the Feistel vs.\ SPN architectural choice has
 significant implications for the software--hardware trade-off.
@@ -458,6 +460,27 @@ for each of 40~rounds.  Interestingly, AES key setup via CommonCrypto
 (448~ns) is comparable to GIFT, likely due to the overhead of creating a
 \texttt{CCCryptor} object.
 
+Table~\ref{tab:ksmem} summarizes the expanded round-key storage required
+in RAM after key scheduling.  SIMON stores 44~32-bit words (176~B);
+GIFT stores 40~pairs of 32-bit words (320~B); AES-128 requires 11~128-bit
+round keys (176~B).  All three fit comfortably in the SRAM budgets of
+typical IoT MCUs ($\geq$2~KiB).
+
+\begin{table}[htbp]
+\caption{Key-Schedule Memory and Hardware Area}
+\label{tab:ksmem}
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Cipher} & \textbf{Rounds} & \textbf{Expanded RK} & \textbf{Area (GE)} \\
+\midrule
+SIMON 64/128  & 44 & 176~B & $\sim$1{,}400 \\
+GIFT-128/128  & 40 & 320~B & $\sim$1{,}300 \\
+AES-128       & 10 & 176~B & $\sim$3{,}400 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsubsection{Throughput}
 
 SIMON achieves approximately 11~cycles/byte in both ECB and CTR modes,
@@ -533,6 +556,20 @@ GIFT-128     &  16 MiB & 23{,}516 & 88.56 &  265.5$\times$ \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Figure~\ref{fig:throughput} plots CTR throughput in GB/s across input
+sizes.  At 16~MiB, SIMON GPU reaches $\approx$35~GB/s
+($\approx$420$\times$ over 0.08~GB/s CPU), while GIFT GPU peaks at
+$\approx$0.31~GB/s at 1~MiB ($\approx$388$\times$ over CPU) before
+dropping to $\approx$0.19~GB/s at 16~MiB due to occupancy limits.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{throughput_ctr_all.png}
+\caption{CTR throughput (GB/s) vs.\ input size on NVIDIA Tesla~T4
+(SM~7.5, \texttt{nvcc~-O2}).}
+\label{fig:throughput}
+\end{figure}
 
 \textbf{Analysis:} CTR mode is embarrassingly parallel---each thread
 encrypts one counter block independently.  Speedups grow with data size as
