@@ -43,26 +43,24 @@ UC San Diego}
 \maketitle
 
 \begin{abstract}
-The Advanced Encryption Standard (AES) is the dominant symmetric cipher in
-general-purpose computing, but its resource requirements can exceed the
-budgets of severely constrained platforms such as passive RFID tags and
-low-power sensor nodes.  This paper presents portable C implementations of
-two lightweight block ciphers---\textbf{SIMON~64/128} (a Feistel network
-from the NSA family) and \textbf{GIFT-128/128} (an SPN cipher designed for
-minimal hardware area)---wrapped in both CBC and CTR modes of operation.
-We validate both implementations against their published specification test
-vectors, then quantitatively benchmark key-schedule cost, throughput
-(cycles/byte in ECB and CTR modes), and compiled code size against an
-\textbf{AES-128} baseline.  On an Apple~M-series processor compiled with
-\texttt{gcc~-O2}, SIMON~64/128 achieves roughly 11~cycles/byte with only
-356~bytes of compiled code, while GIFT-128 trades software speed
-($\approx$339~cpb) for an extremely compact hardware footprint reported in
-the literature at $\sim$1300~GE.  Pure CUDA implementations on an NVIDIA
-Tesla~T4 achieve up to $420\times$ (SIMON) and $388\times$ (GIFT) CTR-mode
-speedups over single-threaded CPU.  Our results confirm that lightweight
-ciphers offer meaningful advantages over AES on platforms lacking hardware
-acceleration, and that the Feistel vs.\ SPN architectural choice has
-significant implications for the software--hardware trade-off.
+AES-128 dominates symmetric encryption in mainstream computing, but its
+gate count and code footprint can be too large for passive RFID tags and
+low-power sensor nodes.  In this paper we implement two lightweight block
+ciphers in portable C: \textbf{SIMON~64/128}, a Feistel design from the
+NSA SIMON family, and \textbf{GIFT-128/128}, an SPN cipher optimized for
+small hardware area.  We wrap both in CBC and CTR modes, verify them
+against published test vectors, and compare key-schedule latency,
+cycles-per-byte throughput, and compiled code size to an \textbf{AES-128}
+hardware-accelerated baseline.  On Apple Silicon (\texttt{gcc~-O2}),
+SIMON runs at about 11~cpb in only 356~bytes of machine code; GIFT is
+slower in software ($\approx$339~cpb) but the literature reports it at
+roughly 1300~GE in silicon, well below AES.  We also wrote pure CUDA
+kernels and measured CTR-mode speedups of $420\times$ for SIMON and
+$388\times$ for GIFT on a Tesla~T4 GPU.  These numbers show that
+lightweight ciphers are a practical alternative to AES when dedicated
+hardware acceleration is not available, and that the choice between
+Feistel and SPN has real consequences depending on whether the target is
+software or silicon.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -74,34 +72,30 @@ benchmark, CBC, CTR
 \section{Introduction}
 %===================================================================
 
-The proliferation of Internet-of-Things (IoT) devices and radio-frequency
-identification (RFID) systems has created demand for symmetric-key
-encryption that fits within extremely tight resource budgets: a few thousand
-logic gates, limited RAM, and minimal code ROM~\cite{bogdanov2007present}.
-While AES-128 is well-studied and widely deployed, even its most compact
-implementations require approximately 2400--3400~gate equivalents
-(GE)~\cite{feldhofer2004strong}, which is prohibitive for passive RFID tags
-that budget only 1000--2000~GE for security.
+As IoT devices and RFID tags become more widespread, there is growing
+need for symmetric encryption that can work within very tight resource
+budgets, sometimes as few as 1000--2000 gate equivalents (GE) with
+limited RAM and code ROM~\cite{bogdanov2007present}.  AES-128 is the
+standard choice for most systems, but even compact AES implementations
+come in at 2400--3400~GE~\cite{feldhofer2004strong}, which is too large
+for many passive RFID scenarios.
 
-The lightweight-cryptography community has responded with a family of
-ciphers that explicitly trade margins of classical security analysis for
-dramatically smaller implementations.  Two notable designs are:
+Several lightweight ciphers have been proposed to fill this gap.  We
+focus on two that represent different design philosophies:
 
 \begin{itemize}
-\item \textbf{SIMON}~\cite{beaulieu2013simon}, a family of Feistel-network
-      ciphers from the NSA, parametrized by word size and key length.  SIMON
-      achieves very small software and hardware footprints by using only
-      circular shifts and bitwise AND/XOR.
-\item \textbf{GIFT}~\cite{banik2017gift}, an SPN (Substitution-Permutation
-      Network) cipher designed as a more efficient successor to
-      PRESENT~\cite{bogdanov2007present}, targeting the smallest possible
-      hardware area while maintaining strong security margins.
+\item \textbf{SIMON}~\cite{beaulieu2013simon} is a Feistel-network cipher
+      family from the NSA.  It uses only circular shifts and bitwise
+      AND/XOR, which keeps both code size and gate count small.
+\item \textbf{GIFT}~\cite{banik2017gift} is an SPN (Substitution-Permutation
+      Network) cipher that improves on PRESENT~\cite{bogdanov2007present}
+      with better hardware efficiency and stronger security margins.
 \end{itemize}
 
-In this project we implement \textbf{SIMON~64/128} (64-bit block, 128-bit
-key, 44~rounds) and \textbf{GIFT-128/128} (128-bit block, 128-bit key,
-40~rounds) in portable C, wrap each in CBC and CTR modes of operation,
-validate against published test vectors, and benchmark against an AES-128
+We implement \textbf{SIMON~64/128} (64-bit block, 128-bit key, 44~rounds)
+and \textbf{GIFT-128/128} (128-bit block, 128-bit key, 40~rounds) in
+portable C, add CBC and CTR mode wrappers, check correctness against
+published test vectors, and measure performance relative to an AES-128
 baseline.
 
 %===================================================================
@@ -124,13 +118,13 @@ many passive tags.
 \subsection{The SIMON Family}
 
 SIMON~$2n/mn$ uses a balanced Feistel network on two $n$-bit words with an
-$mn$-bit key expanded into $T$ round keys~\cite{beaulieu2013simon}.  The
-round function
+$mn$-bit key that gets expanded into $T$ round keys~\cite{beaulieu2013simon}.
+The round function is
 \[
 f(x) = (x \lll 1\ \&\ x \lll 8) \oplus (x \lll 2)
 \]
-requires only three circular left-shifts, one AND, and one XOR---no S-box,
-no multiplication, and no lookup tables.  The key schedule generates round
+which needs just three circular left-shifts, one AND, and one XOR.  There
+is no S-box, no multiplication, and no lookup table.  The key schedule generates round
 keys using a linear recurrence with a $z$-sequence constant that depends on
 $(n, m)$.
 
@@ -158,17 +152,15 @@ words, $T=44$ rounds, $z$-sequence $z_3$.  This configuration provides a
 128-bit security level with 64-bit blocks, suitable for message
 authentication and short-message encryption in IoT.
 
-The Feistel structure means that encryption and decryption share the same
-round function; decryption simply applies the round keys in reverse order
-with swapped halves.  This property reduces code size because only one
-implementation of $f$ is needed.
+Because of the Feistel structure, encryption and decryption use the same
+round function.  Decryption just applies the round keys in reverse with
+swapped halves, so we only need one copy of~$f$ in code.
 
 \subsection{The GIFT Family}
 
-GIFT-128~\cite{banik2017gift} is a 40-round SPN cipher operating on a
-128-bit state represented as 32 four-bit nibbles.  It was designed as a
-successor to PRESENT~\cite{bogdanov2007present}, improving both security
-margins and hardware efficiency.  Each round applies:
+GIFT-128~\cite{banik2017gift} is a 40-round SPN cipher that works on a
+128-bit state stored as 32 four-bit nibbles.  It builds on PRESENT~\cite{bogdanov2007present}, with better security margins and lower
+gate count.  Each round applies three operations:
 
 \begin{enumerate}
 \item \textbf{SubCells:} a 4-bit S-box $\{1,10,4,12,6,15,3,9,2,13,11,7,5,0,8,14\}$ independently to each nibble, providing non-linearity.
@@ -186,18 +178,17 @@ rotations within the top two key words (by 12 and 2 positions
 respectively).  Round constants are generated by a 6-bit LFSR and prevent
 slide attacks.
 
-GIFT's design was specifically optimized for gate count; the authors report
-an area of approximately 1,300~GE for a round-unrolled implementation,
-well below AES and even slightly below PRESENT (1,570~GE), while offering
-a larger 128-bit block that avoids the birthday-bound issues of 64-bit
-block ciphers.  Unlike PRESENT, GIFT uses a non-involutory S-box, which
-slightly increases decryption cost but improves the cipher's algebraic
-properties.
+The whole design was driven by gate count: the authors report about
+1,300~GE for a round-unrolled version, below both AES and
+PRESENT (1,570~GE).  GIFT also uses a 128-bit block, which avoids the
+birthday-bound problems that come with 64-bit blocks.  One trade-off is
+that GIFT's S-box is non-involutory, so decryption is slightly more
+expensive, but this gives the cipher better algebraic properties.
 
 \subsection{Modes of Operation}
 
-Both ciphers are block ciphers and must be combined with a mode of
-operation for variable-length messages.  We implement:
+Since both are block ciphers, they need a mode of operation to handle
+messages longer than one block.  We implement two:
 
 \begin{itemize}
 \item \textbf{CBC (Cipher Block Chaining):} Each plaintext block is XORed
@@ -215,13 +206,12 @@ operation for variable-length messages.  We implement:
 
 \subsection{Cipher Selection}
 
-From the five candidates offered (PRESENT-80, GIFT-128, SIMON-64,
-SPECK-64, SKINNY-64), we selected SIMON and GIFT because they represent
-the two major architectural paradigms---Feistel and SPN---and have
-well-documented test vectors and reference implementations.  SIMON~64/128
-(rather than 64/96) was chosen because it provides a full 128-bit key and
-has a published test vector in the SIMON/SPECK specification
-appendix~\cite{beaulieu2013simon}.
+We had five ciphers to choose from (PRESENT-80, GIFT-128, SIMON-64,
+SPECK-64, SKINNY-64).  We picked SIMON and GIFT because they cover both
+major design families (Feistel and SPN) and have well-documented test
+vectors and reference code.  We went with SIMON~64/128 instead of 64/96
+because it gives a full 128-bit key and has a published test vector in
+the specification appendix~\cite{beaulieu2013simon}.
 
 \subsection{Data Representation}
 
@@ -246,9 +236,9 @@ typedef void (*block_fn_t)(
     const uint8_t *in,
     uint8_t *out);
 \end{lstlisting}
-Thin wrapper functions adapt each cipher's API to this signature, allowing
-CBC and CTR code to be written once and reused across all ciphers including
-the AES baseline.
+We wrote thin wrappers to adapt each cipher's API to this signature,
+so the CBC and CTR code only had to be written once and works with
+SIMON, GIFT, and AES.
 
 %===================================================================
 \section{Implementation}
@@ -256,8 +246,7 @@ the AES baseline.
 
 \subsection{SIMON 64/128}
 
-The implementation consists of three functions totaling approximately
-70~lines of C:
+The whole thing fits in about 70~lines of C across three functions:
 
 \begin{itemize}
 \item \texttt{simon64\_key\_schedule}: Expands 4 key words into 44 round
@@ -279,9 +268,8 @@ The $z_3$ constant is stored as a single 64-bit integer
 
 \subsection{GIFT-128/128}
 
-The GIFT implementation is substantially larger ($\approx$280~lines)
-because the nibble-based permutation and key update require bit-level
-manipulation:
+GIFT takes about 280~lines because all the nibble permutations and
+key updates involve bit-level manipulation:
 
 \begin{itemize}
 \item \texttt{gift128\_key\_schedule}: Pre-computes 40 round-key pairs
@@ -298,7 +286,7 @@ manipulation:
 
 \subsection{Modes of Operation}
 
-\texttt{modes.c} implements CBC and CTR in approximately 90~lines:
+\texttt{modes.c} handles CBC and CTR in about 90~lines:
 
 \begin{itemize}
 \item \textbf{CBC encrypt}: Iterates over full blocks with
@@ -316,19 +304,18 @@ manipulation:
 
 \subsection{AES-128 Baseline}
 
-Rather than implementing AES from scratch, we use the platform's
-hardware-accelerated AES via Apple's CommonCrypto library
-(\texttt{CCCryptorCreate} with \texttt{kCCAlgorithmAES128}).  This
-provides the most representative ``what AES costs on real hardware''
-baseline, since deployed IoT platforms with AES support invariably use
-hardware acceleration.
+We did not reimplement AES ourselves.  Instead we call Apple's
+CommonCrypto library (\texttt{CCCryptorCreate} with
+\texttt{kCCAlgorithmAES128}), which uses the chip's hardware AES
+instructions.  This gives us a realistic ``what does AES actually cost
+on hardware that supports it'' baseline.
 
 \subsection{GPU Implementation (CUDA)}
 
-Both ciphers are implemented as CUDA kernels for GPU-parallel execution.
-CTR mode is embarrassingly parallel: each CUDA thread independently
-encrypts one counter block and XORs it with the corresponding data block.
-We provide two implementations:
+We also wrote CUDA kernels for both ciphers to see how they perform
+on a GPU.  CTR mode is a natural fit because each counter block can be
+encrypted independently, so we assign one thread per block.
+We have two versions:
 
 \begin{itemize}
 \item \textbf{Pure CUDA} (\texttt{gpu\_bench.cu}): Compiled with
@@ -339,16 +326,12 @@ We provide two implementations:
       embedded as strings, driven by Python for rapid prototyping.
 \end{itemize}
 
-Key GPU optimizations:
-\begin{itemize}
-\item Round keys, S-boxes, and permutation tables are placed in CUDA
-      \texttt{\_\_constant\_\_} memory ($<$1~KiB total), providing cached
-      broadcast reads.
-\item Each thread processes one block with no inter-thread dependencies,
-      achieving full occupancy at 256~threads/block.
-\item Key schedules are computed once on the CPU and transferred to the GPU
-      before kernel launch.
-\end{itemize}
+On the GPU side, we put round keys, S-boxes, and permutation tables in
+\texttt{\_\_constant\_\_} memory ($<$1~KiB total) so every thread can
+read them from cache.  Each thread handles one block with no
+dependencies on other threads, and we use 256~threads/block.  Key
+schedules run once on the CPU and get copied to the GPU before the
+kernel launches.
 
 %===================================================================
 \section{Implementation Challenges}\label{sec:challenges}
@@ -356,23 +339,21 @@ Key GPU optimizations:
 
 \subsection{SIMON Variant Confusion}
 
-Our initial implementation used a SIMON~64/64 configuration (2 key words,
-32 rounds, $z_0$ sequence).  This configuration does not appear in the
-official SIMON specification~\cite{beaulieu2013simon}, which defines
-SIMON~64 only with 96-bit or 128-bit keys.  Consequently, no published
-test vector exists for verification.  We resolved this by switching to
-SIMON~64/128 ($m{=}4$, 44~rounds, $z_3$), which has a clear test vector
-in the specification appendix: key
+We initially coded SIMON~64/64 (2 key words, 32 rounds, $z_0$), but
+it turns out that variant does not actually appear in the official
+spec~\cite{beaulieu2013simon}.  SIMON~64 is only defined with 96-bit
+or 128-bit keys, so there was no test vector we could check against.
+We switched to SIMON~64/128 ($m{=}4$, 44~rounds, $z_3$), which has a
+test vector in the appendix: key
 \texttt{1b1a1918\,13121110\,0b0a0908\,03020100}, plaintext
 \texttt{656b696c\,20646e75}, ciphertext
 \texttt{44c8fc20\,b9dfa07a}.
 
 \subsection{GIFT Nibble-Packing Bug}
 
-The GIFT reference implementation represents 128-bit data as 32 nibbles
-with \texttt{cells[0]} as the least-significant nibble.  Our initial byte
-$\leftrightarrow$ nibble conversion swapped the high and low nibble
-assignments:
+GIFT stores 128-bit data as 32 nibbles with \texttt{cells[0]} being the
+least-significant one.  In our first version we accidentally swapped
+which nibble was high and which was low:
 \begin{lstlisting}
 /* WRONG */
 cells[31-2*i]   = in[i] & 0x0f;
@@ -385,18 +366,17 @@ implementation~\cite{giftref}) is:
 cells[31-2*i]   = in[i] >> 4;
 cells[31-2*i-1] = in[i] & 0x0f;
 \end{lstlisting}
-This single swap caused all GIFT outputs to be incorrect.  The fix was
-confirmed by matching both all-zero and non-trivial test vectors from the
-GIFT specification.
+This one-line bug made every GIFT output wrong.  Once we flipped the
+assignments, both the all-zero and the non-trivial test vectors matched.
 
 \subsection{Key-Schedule Constant Verification}
 
-The $z_3$ sequence for SIMON~64/128 is a 62-bit LFSR output.  Different
-references write it in different bit orderings (MSB-first vs.\ LSB-first).
-We verified the packed constant \texttt{0xfc2ce51207a635db} by
-cross-referencing the Crypto++ library source code and the
-\texttt{refinery} Python implementation, checking individual bit values
-against the specification table.
+The $z_3$ constant is a 62-bit LFSR output, and different references
+write the bits in different orders (MSB-first vs.\ LSB-first), which
+caused some confusion.  We ended up verifying our packed value
+\texttt{0xfc2ce51207a635db} by comparing against both the Crypto++
+source and a Python implementation, and spot-checking individual bits
+against the table in the spec.
 
 %===================================================================
 \section{Results}
@@ -452,13 +432,14 @@ AES-128 (hw)  & 448 &  1.8 &  1.6 & --- \\
 
 \subsubsection{Key-Schedule Cost}
 
-SIMON's key schedule is extremely fast (38~ns) because it performs only
-simple 32-bit shifts and XORs in a linear recurrence.  GIFT's key schedule
-is approximately $13\times$ slower (488~ns) because it must decompose the
-128-bit key state into individual bits and repack 32-bit round-key slices
-for each of 40~rounds.  Interestingly, AES key setup via CommonCrypto
-(448~ns) is comparable to GIFT, likely due to the overhead of creating a
-\texttt{CCCryptor} object.
+SIMON's key schedule runs in 38~ns, which makes sense given that it
+is just 32-bit shifts and XORs in a loop.  GIFT takes about $13\times$
+longer (488~ns) because it has to pull the 128-bit key apart into
+individual bits and repack two 32-bit round-key words for each of
+40~rounds.  We were surprised that AES key setup through CommonCrypto
+(448~ns) is almost as slow as GIFT; we suspect most of that time goes
+into creating the \texttt{CCCryptor} object rather than the actual
+key expansion.
 
 Table~\ref{tab:ksmem} summarizes the expanded round-key storage required
 in RAM after key scheduling.  SIMON stores 44~32-bit words (176~B);
@@ -483,33 +464,33 @@ AES-128       & 10 & 176~B & $\sim$3{,}400 \\
 
 \subsubsection{Throughput}
 
-SIMON achieves approximately 11~cycles/byte in both ECB and CTR modes,
-making it highly competitive for software implementations on constrained
-microcontrollers.  The Feistel structure with bitwise-only operations maps
-efficiently to any processor with a barrel shifter.
+SIMON runs at about 11~cycles/byte in both ECB and CTR, which is quite
+good for a software-only cipher on a constrained processor.  The Feistel
+round function only needs shifts and bitwise ops, so any CPU with a
+barrel shifter can run it efficiently.
 
-GIFT is roughly $31\times$ slower than SIMON in software (339~cpb vs.\
-11~cpb).  This is expected: GIFT's nibble-based permutation requires
-decomposing the state into 128~individual bits, permuting, and repacking
-for every round.  This operation is inherently expensive in software but
-maps directly to wiring in hardware.
+GIFT comes in at 339~cpb, roughly $31\times$ slower.  This is not
+surprising: every round has to break the state into 128 individual bits,
+shuffle them according to the permutation table, and pack them back
+into nibbles.  That is expensive in software but essentially free in
+hardware where it is just wiring.
 
-AES-128 with hardware AES-NI achieves under 2~cpb, but this comparison is
-by design unfair: the entire motivation for lightweight ciphers is that
-AES hardware support is unavailable on the target platforms.
+AES-128 with hardware AES-NI gets under 2~cpb, but the whole point of
+lightweight ciphers is that the target platforms do not have AES-NI, so
+this comparison is intentionally lopsided.
 
 \subsubsection{Code Size}
 
-SIMON~64/128 compiles to only \textbf{356~bytes} of \texttt{.text}
-segment, small enough to fit in the instruction cache of even the most
-constrained microcontrollers.  GIFT-128 requires \textbf{4,476~bytes},
-primarily due to the 128-entry permutation tables (256~bytes each for
-forward and inverse) and the bit-manipulation loops.
+SIMON compiles down to just \textbf{356~bytes} of \texttt{.text}, which
+easily fits in the instruction cache of even tiny microcontrollers.
+GIFT needs \textbf{4,476~bytes}, mostly because of the two 128-entry
+permutation tables (256~bytes each for forward and inverse) plus all
+the bit-manipulation loop code.
 
 \subsection{Hardware Area (Literature)}
 
-While we did not perform hardware synthesis, published figures provide
-context.  Table~\ref{tab:hw} summarizes gate-equivalent counts from the
+We did not do our own hardware synthesis, but published numbers give
+useful context.  Table~\ref{tab:hw} lists gate counts from the
 literature.
 
 \begin{table}[htbp]
@@ -528,9 +509,9 @@ AES-128~\cite{feldhofer2004strong}    & 128/128 & 3{,}400 \\
 \end{tabular}
 \end{table}
 
-GIFT's SPN structure maps almost directly to hardware wiring for the
-permutation layer, explaining its excellent gate count despite poor software
-performance.  SIMON is competitive in both domains.
+GIFT does well in hardware because the permutation layer maps almost
+directly to wiring, even though it is slow in software.  SIMON sits in
+a nice middle ground where it is competitive in both.
 
 \subsection{GPU Benchmark Results}
 
@@ -571,81 +552,68 @@ dropping to $\approx$0.19~GB/s at 16~MiB due to occupancy limits.
 \label{fig:throughput}
 \end{figure}
 
-\textbf{Analysis:} CTR mode is embarrassingly parallel---each thread
-encrypts one counter block independently.  Speedups grow with data size as
-kernel launch overhead is amortized.  SIMON achieves up to
-\textbf{420$\times$} speedup at 16~MiB, benefiting from its minimal
-register footprint (only 32-bit shifts and XORs).  GIFT reaches
-\textbf{388$\times$} at 1~MiB but drops to 266$\times$ at 16~MiB, likely
-due to higher register pressure from the 128-bit permutation arrays
-causing reduced occupancy.  CBC encryption remains inherently sequential,
-though CBC \emph{decryption} is parallelizable.
+Since every counter block is independent, CTR mode parallelizes
+trivially on a GPU.  At small sizes (64~KiB) the kernel launch overhead
+dominates and the speedup is modest, but at 16~MiB SIMON hits
+\textbf{420$\times$} because its round function uses so few registers
+(just shifts and XORs).  GIFT peaks at \textbf{388$\times$} for 1~MiB
+but falls to 266$\times$ at 16~MiB.  We believe this is because the
+permutation arrays push up register usage and reduce occupancy.
+CBC encryption is still sequential by nature, though CBC
+\emph{decryption} could be parallelized.
 
 \subsection{Discussion}
 
-Our results highlight a fundamental trade-off:
+The numbers paint a clear picture of where each cipher fits best.
+SIMON's Feistel rounds use only register-level operations, so it is
+fast in software even though it needs more rounds (44 vs.\ 40).  GIFT's
+bit permutations are essentially free in hardware wiring but require
+explicit bit extraction and insertion in software, which explains the
+339~cpb figure.  AES is still the fastest option \emph{if} the chip has
+AES-NI, but without that support the MixColumns step and large S-box
+tables make it both slower and bigger than either lightweight cipher.
 
-\begin{itemize}
-\item \textbf{Feistel ciphers} (SIMON) excel in software because their
-      round functions use only register-level operations.  The cost is a
-      larger number of rounds (44 for SIMON~64/128 vs.\ 40 for GIFT-128).
-\item \textbf{SPN ciphers} (GIFT) excel in hardware because bit
-      permutations are free in wiring.  In software, however, each
-      permutation requires explicit bit extraction and insertion.
-\item \textbf{AES} offers the best throughput \emph{when hardware
-      acceleration is available}, but on platforms without AES-NI, its
-      MixColumns operation and large S-box make it slower and larger than
-      either SIMON or GIFT.
-\end{itemize}
-
-For an IoT node with a small ARM Cortex-M0 processor (no AES-NI, limited
-flash), SIMON~64/128 is the strongest candidate: 11~cpb throughput, 356~B
-code size, and a 38~ns key schedule.  For an ASIC-based RFID tag where
-silicon area is the primary constraint, GIFT-128 at $\sim$1300~GE is
-preferable.
+In practice, for something like an ARM Cortex-M0 IoT node (no AES-NI,
+limited flash), SIMON is the obvious pick: 11~cpb, 356~bytes of code,
+38~ns key setup.  For an ASIC or RFID tag where silicon area matters
+most, GIFT at $\sim$1300~GE is the better choice.
 
 \subsection{Security Considerations}
 
-Both SIMON~64/128 and GIFT-128/128 provide 128-bit key security.  SIMON
-has been extensively analyzed for differential, linear, and impossible
-differential attacks; the best published attacks reach approximately 26 of
-44~rounds~\cite{beaulieu2013simon}, leaving a comfortable security margin.
-GIFT's non-involutory S-box was specifically chosen to maximize resistance
-to differential and linear cryptanalysis; no practical attack exceeds
-23~of 40~rounds in the published literature.
+Both ciphers use 128-bit keys.  SIMON has been analyzed extensively:
+the best published differential/linear attacks get through about 26 out
+of 44~rounds~\cite{beaulieu2013simon}, so there is a solid margin.
+For GIFT, the best known attacks cover 23 of 40~rounds; the
+non-involutory S-box was chosen specifically to resist differential
+and linear cryptanalysis.
 
-A notable practical advantage of both ciphers is their constant-time
-execution: neither uses data-dependent table lookups (SIMON has no tables
-at all; GIFT's S-box is applied nibble-by-nibble and can be implemented
-with bitwise operations).  This makes them inherently resistant to
-cache-timing side-channel attacks, unlike table-based AES implementations.
+One practical bonus is that both ciphers run in constant time.  SIMON
+has no lookup tables at all, and GIFT applies its S-box
+nibble-by-nibble (which can be done with bitwise ops).  Neither cipher
+has data-dependent memory access patterns, so they are not vulnerable
+to cache-timing side-channel attacks the way table-based AES can be.
 
 %===================================================================
 \section{Conclusion}
 %===================================================================
 
-We have implemented, validated, and benchmarked two lightweight block
-ciphers---SIMON~64/128 and GIFT-128/128---in both CPU (portable~C) and
-GPU (pure CUDA + PyCUDA) implementations, with CBC and CTR modes of
-operation.  All implementations pass their published specification test
-vectors.
+We built working C implementations of SIMON~64/128 and GIFT-128/128
+with CBC and CTR modes, verified them against spec test vectors, and
+benchmarked them against hardware-accelerated AES-128.  We also wrote
+CUDA kernels for both ciphers and ran them on a Tesla~T4.
 
-Our quantitative comparison against an AES-128 baseline confirms the
-design thesis of lightweight cryptography: when hardware AES acceleration
-is absent, purpose-built lightweight ciphers provide significant advantages
-in code size (SIMON at 356~B vs.\ AES at $>$1~KiB with tables) and
-predictable, table-free execution suitable for side-channel-resistant
-implementations.
+The takeaway is pretty clear: on platforms without AES-NI, lightweight
+ciphers are worth considering.  SIMON in particular gives 11~cpb in
+only 356~bytes of code, and on a GPU it scales to a 420$\times$
+speedup in CTR mode.  GIFT is much slower in software but comes in
+at roughly 1300~GE in hardware, which matters for RFID and similar
+area-constrained designs.
 
-The GPU implementations demonstrate that CTR mode is embarrassingly
-parallel, achieving up to 420$\times$ (SIMON) and 388$\times$ (GIFT)
-speedups over single-threaded CPU on an NVIDIA Tesla~T4.  SIMON's minimal
-register footprint makes it particularly well-suited for GPU execution.
-
-The Feistel-vs.-SPN architectural comparison reveals that SIMON dominates
-in software metrics (both CPU and GPU) while GIFT dominates in hardware
-area, providing clear guidance for system designers choosing between
-software and hardware implementations of lightweight encryption.
+From a design perspective, the Feistel vs.\ SPN choice matters a lot.
+SIMON wins on every software metric we measured (CPU throughput, code
+size, GPU speedup), while GIFT wins on hardware area.  For anyone
+choosing a lightweight cipher, the decision should come down to
+whether the implementation target is software or silicon.
 
 %===================================================================
 \section*{Acknowledgment}
